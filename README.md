@@ -1,0 +1,2 @@
+# mnistgpgpu
+mnist on gpgpu
