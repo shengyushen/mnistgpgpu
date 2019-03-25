@@ -1,3 +1,8 @@
 *.ptx
 *.ptxas
+*.o
+_app_cuda_version_*
+_cuobjdump_list_ptx_*
+tags
+xx*_bs*_l*
 
