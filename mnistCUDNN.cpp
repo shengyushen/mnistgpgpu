@@ -825,7 +825,7 @@ int main(int argc, char *argv[])
 {   
     std::string image_path;
     int i1,i2,i3;
-		int numCpy=128;
+		int numCpy=16;
 
     if (checkCmdLineFlag(argc, (const char **)argv, "help"))
     {

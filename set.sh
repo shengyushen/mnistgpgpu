@@ -1,0 +1,6 @@
+export CUDA_INSTALL_PATH=/usr/local/cuda
+export PATH=$CUDA_INSTALL_PATH/bin:$PATH
+#export PTXAS_CUDA_INSTALL_PATH=$CUDA_INSTALL_PATH
+export PTX_SIM_DEBUG=3
+#export WYS_EXEC_PATH=wys
+
