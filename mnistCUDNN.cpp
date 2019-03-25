@@ -28,12 +28,14 @@
 
 #include <cuda.h> // need CUDA_VERSION
 #include <cudnn_v7.h>
+#include <assert.h>
 
 #include <FreeImage.h>
 #include "fp16_dev.h"
 #include "fp16_emu.h"
 #include "gemv.h"
 #include "error_util.h"
+
 
 #define IMAGE_H 28
 #define IMAGE_W 28
@@ -231,6 +233,7 @@ typedef enum {
         FP16_CUDA  = 1,
         FP16_CUDNN = 2
  } fp16Import_t;
+
 template <class value_type>
 struct Layer_t
 {
@@ -466,21 +469,24 @@ class network_t
                           int& n, int& c, int& h, int& w,
                           value_type* srcData, value_type** dstData)
     {
-        if (n != 1)
+        /*if (n != 1)
         {
             FatalError("Not Implemented"); 
-        }
+        }*/
         int dim_x = c*h*w;
         int dim_y = ip.outputs;
-        resize(dim_y, dstData);
+        resize(dim_y*n, dstData);
 
         scaling_type alpha = scaling_type(1), beta = scaling_type(1);
-        // place bias into dstData
-        checkCudaErrors( cudaMemcpy(*dstData, ip.bias_d, dim_y*sizeof(value_type), cudaMemcpyDeviceToDevice) );
-        
-        gemv(cublasHandle, dim_x, dim_y, alpha,
+				value_type* old_start_dstData=*dstData;
+				for(int i=0;i<n;i++) {
+        	// place bias into dstData
+        	checkCudaErrors( cudaMemcpy(*dstData, ip.bias_d, dim_y*sizeof(value_type), cudaMemcpyDeviceToDevice) );
+        	gemv(cublasHandle, dim_x, dim_y, alpha,
                 ip.data_d, srcData, beta,*dstData);
-
+					*dstData=*dstData+dim_y;
+				}
+				*dstData=old_start_dstData;
         h = 1; w = 1; c = dim_y;
     }
     void convoluteForward(const Layer_t<value_type>& conv,
@@ -684,7 +690,9 @@ class network_t
                                             lrnBeta,
                                             lrnK) );
 
+				std::cout << "\nSTART lrnForward resize\n"<<std::flush;
         resize(n*c*h*w, dstData);
+				std::cout << "\nEND lrnForward resize\n"<<std::flush;
 
         setTensorDesc(srcTensorDesc, tensorFormat, dataType, n, c, h, w);
         setTensorDesc(dstTensorDesc, tensorFormat, dataType, n, c, h, w);
@@ -729,7 +737,7 @@ class network_t
 				std::cout << "\nEND cudnnActivationForward\n"<<std::flush;
     }
 
-    int classify_example(const char* fname, const Layer_t<value_type>& conv1,
+    int classify_example(int numCpy, const char* fname, const Layer_t<value_type>& conv1,
                           const Layer_t<value_type>& conv2,
                           const Layer_t<value_type>& ip1,
                           const Layer_t<value_type>& ip2)
@@ -742,12 +750,15 @@ class network_t
 
         std::cout << "Performing forward propagation ...\n";
 
-        checkCudaErrors( cudaMalloc(&srcData, IMAGE_H*IMAGE_W*sizeof(value_type)) );
-        checkCudaErrors( cudaMemcpy(srcData, imgData_h,
+        checkCudaErrors( cudaMalloc(&srcData, numCpy*IMAGE_H*IMAGE_W*sizeof(value_type)) );
+				for(int i=0;i<numCpy;i++) {
+        	checkCudaErrors( cudaMemcpy(srcData+i*IMAGE_H*IMAGE_W, imgData_h,
                                     IMAGE_H*IMAGE_W*sizeof(value_type),
                                     cudaMemcpyHostToDevice) );
+				}
 
-        n = c = 1; h = IMAGE_H; w = IMAGE_W;
+        n = numCpy;
+				c = 1; h = IMAGE_H; w = IMAGE_W;
         convoluteForward(conv1, n, c, h, w, srcData, &dstData);
         poolForward(n, c, h, w, dstData, &srcData);
 
@@ -767,20 +778,25 @@ class network_t
         const int max_digits = 10;
         // Take care of half precision
         Convert<scaling_type> toReal;
-        value_type result[max_digits];
-        checkCudaErrors( cudaMemcpy(result, dstData, max_digits*sizeof(value_type), cudaMemcpyDeviceToHost) );
-        int id = 0;
-        for (int i = 1; i < max_digits; i++)
-        {
-            if (toReal(result[id]) < toReal(result[i])) id = i;
-        }
+        value_type result[numCpy*max_digits];
+        checkCudaErrors( cudaMemcpy(result, dstData, numCpy*max_digits*sizeof(value_type), cudaMemcpyDeviceToHost) );
+				int id[1024];
+				assert(numCpy<1024);
+				for(int j=0;j<numCpy;j++) {
+	        id[j] = 0;
+    	    for (int i = 1; i < max_digits; i++)
+	        {
+            if (toReal(result[j*max_digits+id[j]]) < toReal(result[j*max_digits+i])) id[j] = i;
+  	      }
+					assert(id[j]==id[0]);
+				}
 
         std::cout << "Resulting weights from Softmax:" << std::endl;
         printDeviceVector(n*c*h*w, dstData);
 
         checkCudaErrors( cudaFree(srcData) );
         checkCudaErrors( cudaFree(dstData) );
-        return id;
+        return id[0];
     }
 };
 
@@ -809,6 +825,7 @@ int main(int argc, char *argv[])
 {   
     std::string image_path;
     int i1,i2,i3;
+		int numCpy=128;
 
     if (checkCmdLineFlag(argc, (const char **)argv, "help"))
     {
@@ -840,7 +857,7 @@ int main(int argc, char *argv[])
         Layer_t<float> conv2(20,50,5,conv2_bin,conv2_bias_bin,argv[0]);
         Layer_t<float>   ip1(800,500,1,ip1_bin,ip1_bias_bin,argv[0]);
         Layer_t<float>   ip2(500,10,1,ip2_bin,ip2_bias_bin,argv[0]);
-        int i1 = mnist.classify_example(image_name, conv1, conv2, ip1, ip2);
+        int i1 = mnist.classify_example(1,image_name, conv1, conv2, ip1, ip2);
         std::cout << "\nResult of classification: " << i1 << std::endl;
 
         cudaDeviceReset();
@@ -872,19 +889,19 @@ int main(int argc, char *argv[])
             Layer_t<float>   ip2(500,10,1,ip2_bin,ip2_bias_bin,argv[0]);
             get_path(image_path, first_image, argv[0]);
 						std::cout << "\nSTART image 1\n"<<std::flush;
-            i1 = mnist.classify_example(image_path.c_str(), conv1, conv2, ip1, ip2);
+            i1 = mnist.classify_example(numCpy,image_path.c_str(), conv1, conv2, ip1, ip2);
 						std::cout << "\nEND image 1\n"<<std::flush;
             
             get_path(image_path, second_image, argv[0]);
 						std::cout << "\nSTART image 2\n"<<std::flush;
-            i2 = mnist.classify_example(image_path.c_str(), conv1, conv2, ip1, ip2);
+            i2 = mnist.classify_example(numCpy,image_path.c_str(), conv1, conv2, ip1, ip2);
 						std::cout << "\nEND image 2\n"<<std::flush;
             
             get_path(image_path, third_image, argv[0]);
             // New feature in cuDNN v3: FFT for convolution
             mnist.setConvolutionAlgorithm(CUDNN_CONVOLUTION_FWD_ALGO_FFT);
 						std::cout << "\nSTART image 3 FFT\n"<<std::flush;
-            i3 = mnist.classify_example(image_path.c_str(), conv1, conv2, ip1, ip2);
+            i3 = mnist.classify_example(numCpy,image_path.c_str(), conv1, conv2, ip1, ip2);
 						std::cout << "\nEND image 3 FFT\n"<<std::flush;
 
             std::cout << "\nResult of classification: " << i1 << " " << i2 << " " << i3 << std::endl;
@@ -914,12 +931,12 @@ int main(int argc, char *argv[])
             Layer_t<half1>   ip2(500,10,1,ip2_bin,ip2_bias_bin,argv[0], FP16_HOST);
             get_path(image_path, first_image, argv[0]);
 						std::cout << "\nSTART image 1\n"<<std::flush;
-            i1 = mnist.classify_example(image_path.c_str(), conv1, conv2, ip1, ip2);
+            i1 = mnist.classify_example(numCpy,image_path.c_str(), conv1, conv2, ip1, ip2);
 						std::cout << "\nEND image 1\n"<<std::flush;
             
             get_path(image_path, second_image, argv[0]);
 						std::cout << "\nSTART image 2\n"<<std::flush;
-            i2 = mnist.classify_example(image_path.c_str(), conv1, conv2, ip1, ip2);
+            i2 = mnist.classify_example(numCpy,image_path.c_str(), conv1, conv2, ip1, ip2);
 						std::cout << "\nEND image 2\n"<<std::flush;
             
             get_path(image_path, third_image, argv[0]);
@@ -929,7 +946,7 @@ int main(int argc, char *argv[])
                 mnist.setConvolutionAlgorithm(CUDNN_CONVOLUTION_FWD_ALGO_FFT);
             }
 						std::cout << "\nSTART image 3 FFT\n"<<std::flush;
-            i3 = mnist.classify_example(image_path.c_str(), conv1, conv2, ip1, ip2);
+            i3 = mnist.classify_example(numCpy,image_path.c_str(), conv1, conv2, ip1, ip2);
 						std::cout << "\nEND image 3 FFT\n"<<std::flush;
 
             std::cout << "\nResult of classification: " << i1 << " " << i2 << " " << i3 << std::endl;

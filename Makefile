@@ -145,7 +145,9 @@ LIBRARIES :=
 ################################################################################
 
 # Gencode arguments
-SMS ?= 20 30 35 50 53 60
+#SMS ?= 20 30 35 50 53 60
+# for running in v100
+SMS ?= 60
 
 ifeq ($(SMS),)
 $(info >>> WARNING - no SM architectures have been specified - waiving sample <<<)
