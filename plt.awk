@@ -34,7 +34,7 @@ END {
 		getline; assert($1=="partiton_level_parallism_util"); printf $3;printf " ";
 		getline; assert($1=="partiton_level_parallism_util_total"); printf $3;printf " ";
 		getline; assert($1=="L2_BW"); printf $3;printf " ";
-		getline; assert($1=="L2_BW_total"); printf $3;printf " ";
+#		getline; assert($1=="L2_BW_total"); printf $3;printf " ";
 		getline; assert($1 ~ "^gpu_total_sim_rate"); split($1,arr);printf arr[3];
 
 		print ""
