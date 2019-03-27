@@ -20,7 +20,7 @@ END {
 		getline; assert($1=="gpu_sim_cycle"); printf $3;printf " ";sc=$3;
 		getline; assert($1=="gpu_sim_insn"); printf $3;printf " ";
 		getline; assert($1=="gpu_ipc"); printf $3;printf " ";
-		getline; assert($1=="gpu_tot_sim_cycle"); printf $3;printf " ";assert(last_total_sc+sc==$3);last_total_sc=$3;
+		getline; assert($1=="gpu_tot_sim_cycle"); printf last_total_sc+sc;printf " ";last_total_sc=last_total_sc+sc;
 		getline; assert($1=="gpu_tot_sim_insn"); printf $3;printf " ";
 		getline; assert($1=="gpu_tot_ipc"); printf $3;printf " ";
 		getline; assert($1=="gpu_tot_issued_cta"); printf $3;printf " ";
